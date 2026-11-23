@@ -1,0 +1,34 @@
+{
+    "chain": "main",
+    "entries": [
+        {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "seq": 1,
+            "hash": "b2886c9c11ee1a4f134dcba4058dd64e136637c5024dd6caa0296a8dbbfc906b",
+            "prev": "0d6e4079e36703ebd37c00722f5891d28b0e2811dc114b129215123adcce3605",
+            "ciphertext": "0011223300000001"
+        },
+        {
+            "id": "a0000000-0000-4000-8000-000000000002",
+            "seq": 2,
+            "hash": "1ec1814d68fc808cc28d2229e37011f4b8e44aa4ad4f24ed5d3353836ce7ca6d",
+            "prev": "b2886c9c11ee1a4f134dcba4058dd64e136637c5024dd6caa0296a8dbbfc906b",
+            "ciphertext": "0011223300000002"
+        },
+        {
+            "id": "a0000000-0000-4000-8000-000000000003",
+            "seq": 3,
+            "hash": "719a690197610e3739049bf1840063562bbfdd3634c0f701cce396dd9605ee73",
+            "prev": "1ec1814d68fc808cc28d2229e37011f4b8e44aa4ad4f24ed5d3353836ce7ca6d",
+            "ciphertext": "0011223300000003"
+        },
+        {
+            "id": "a0000000-0000-4000-8000-000000000004",
+            "seq": 4,
+            "hash": "0339c4cef1661a9ef71ddb04df240dac73f06c665f4761d672eb8fe9a4965ba2",
+            "prev": "719a690197610e3739049bf1840063562bbfdd3634c0f701cce396dd9605ee73",
+            "ciphertext": "0011223300000004"
+        }
+    ],
+    "encoding": "sha256(lp(prev)||lp(chain)||lp(id)||lp(ciphertext)||lp(uint64be(seq)))"
+}

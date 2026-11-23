@@ -1,0 +1,46 @@
+{
+  "name": "ctu-danao-student-elections",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 3000 --strictPort",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",
+    "preview": "vite preview --host 0.0.0.0 --port 3000 --strictPort",
+    "test:live": "bash tests/run-live.sh",
+    "size": "size-limit",
+    "check": "pnpm typecheck && pnpm build && pnpm size"
+  },
+  "dependencies": {
+    "@fontsource-variable/fraunces": "^5.2.0",
+    "@fontsource/inter": "5.2.6",
+    "lucide-react": "0.468.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "react-router-dom": "7.1.1"
+  },
+  "devDependencies": {
+    "@size-limit/preset-app": "11.1.6",
+    "@axe-core/playwright": "4.10.2",
+    "@playwright/test": "1.50.1",
+    "@types/node": "22.10.7",
+    "@types/react": "19.0.8",
+    "@types/react-dom": "19.0.3",
+    "@vitejs/plugin-react": "4.3.4",
+    "autoprefixer": "10.4.20",
+    "postcss": "8.5.1",
+    "size-limit": "11.1.6",
+    "typescript": "5.7.3",
+    "vite": "6.0.7",
+    "tailwindcss": "3.4.17"
+  },
+  "size-limit": [
+    {
+      "path": "dist/assets/*.js",
+      "limit": "250 KB",
+      "gzip": true
+    }
+  ]
+}
