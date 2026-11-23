@@ -8,10 +8,10 @@ importers:
 
   .:
     dependencies:
+      '@fontsource-variable/fraunces':
+        specifier: ^5.2.0
+        version: 5.3.0
       '@fontsource/inter':
-        specifier: 5.2.6
-        version: 5.2.6
-      '@fontsource/montserrat':
         specifier: 5.2.6
         version: 5.2.6
       lucide-react:
@@ -311,11 +311,11 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@fontsource-variable/fraunces@5.3.0':
+    resolution: {integrity: sha512-9BYGySn4AHEJdgp9Z28tQ3X+laJMEOITXkQarZXeloWQZDq5oOvXJ3kDA8c7MGIfpogIaZfjrQBqmda8POOCKA==}
+
   '@fontsource/inter@5.2.6':
     resolution: {integrity: sha512-CZs9S1CrjD0jPwsNy9W6j0BhsmRSQrgwlTNkgQXTsAeDRM42LBRLo3eo9gCzfH4GvV7zpyf78Ozfl773826csw==}
-
-  '@fontsource/montserrat@5.2.6':
-    resolution: {integrity: sha512-AfFxq1q5tgkOsjQfMFsh95uMXh39VbGOuBLlHLFg16/txv93lqK7Sr6jev0neuJzZy1kqRG16SH6xpUYnk4cZg==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -1581,9 +1581,9 @@ snapshots:
   '@esbuild/win32-x64@0.24.2':
     optional: true
 
-  '@fontsource/inter@5.2.6': {}
+  '@fontsource-variable/fraunces@5.3.0': {}
 
-  '@fontsource/montserrat@5.2.6': {}
+  '@fontsource/inter@5.2.6': {}
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
