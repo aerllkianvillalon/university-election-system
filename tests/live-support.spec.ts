@@ -52,14 +52,15 @@ test('in-person claim: a wrong code gets the generic refusal; the right code set
   await page.getByRole('link', { name: 'Go to sign in' }).click();
   await page.locator('#identifier').fill('2026-00004'); await page.locator('#password').fill(NEW);
   await page.getByRole('button', { name: /^Sign in/ }).click();
-  await expect(page.getByRole('status')).toBeVisible();
+  await expect(page).toHaveURL(/\/vote$/);
   expect(await page.evaluate(async () => (await fetch('/api/me')).status)).toBe(200);
 });
 
 test('password reset: link is checked, hidden from the address bar, works once; old password stops working', async ({ page }) => {
   await page.goto('/register');
   await page.locator('#student-id').fill('2026-00003'); await page.locator('#voucher').fill('DEMO-3'); await page.locator('#password').fill(OLD);
-  await page.getByRole('checkbox').check(); await page.getByRole('button', { name: /Create/ }).click(); await expect(page.getByRole('status')).toBeVisible();
+  await page.locator('#pick-program').selectOption('BSIT');
+  await page.getByRole('checkbox').check(); await page.getByRole('button', { name: /Create/ }).click(); await expect(page).toHaveURL(/\/vote$/);
   await page.getByRole('button', { name: /Sign out/ }).first().click(); await expect(page.getByRole('link', { name: 'Sign in' }).first()).toBeVisible();
   await page.goto('/forgot-password');
   await page.locator('#identifier').fill('2026-00003'); await page.getByRole('button', { name: /Send instructions/ }).click();
@@ -87,7 +88,7 @@ test('password reset: link is checked, hidden from the address bar, works once; 
   for (const [pw, ok] of [[OLD, false], [NEW, true]] as const) {
     await page.goto('/login'); await page.locator('#identifier').fill('2026-00003'); await page.locator('#password').fill(pw);
     await page.getByRole('button', { name: /^Sign in/ }).click();
-    if (ok) { await expect(page.getByRole('status')).toBeVisible(); } else { await expect(page.getByRole('alert')).toBeVisible(); }
+    if (ok) { await expect(page).toHaveURL(/\/vote$/); } else { await expect(page.getByRole('alert')).toBeVisible(); }
   }
 });
 

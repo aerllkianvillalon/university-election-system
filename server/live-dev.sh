@@ -22,10 +22,11 @@ psql -X -q $DB -c "INSERT INTO election.positions(election_id,title,seats,scope,
  -c "INSERT INTO election.candidates(election_id,position_id,name,platform)
      SELECT p.election_id,p.id,p.title||' '||g, 'Platform of '||p.title||' '||g FROM election.positions p, generate_series(1,3) g WHERE g <= CASE WHEN p.title='Senators' THEN 3 ELSE 2 END"
 # Real ceremony output (Shamir shares + signing key), so the browser tests can run the real tally and import it.
-W=/tmp/live-cer; rm -rf $W; node packages/cli/ev.mjs keygen --out $W >/dev/null
+W=/tmp/live-cer; command -v cygpath >/dev/null 2>&1 && W=$(cygpath -m /tmp/live-cer)   # Git Bash: Node needs a Windows path
+rm -rf $W; node packages/cli/ev.mjs keygen --out $W >/dev/null
 PUB=$(cat $W/election.pub)
 SK=$(cd packages/cli && node -e "import('shamir-secret-sharing').then(async m=>{const fs=require('fs');const sh=[1,3,5].map(i=>new Uint8Array(Buffer.from(fs.readFileSync('$W/share-'+i+'.txt','utf8'),'base64')));console.log(Buffer.from(await m.combine(sh)).toString('base64'))})")
-hex() { python3 -c "import base64,sys;print(base64.b64decode(open('$1').read()).hex())"; }
+hex() { node -e "process.stdout.write(Buffer.from(require('fs').readFileSync(process.argv[1],'utf8').trim(),'base64').toString('hex'))" "$1"; }
 psql -X -q $DB -c "UPDATE election.elections SET public_key = decode('$(hex $W/election.pub)','hex'), signing_key = decode('$(hex $W/signing.pub)','hex') WHERE id='$E'"
 # Staff: three administrators (a1, a2, a3) and a proctor. Secrets are random per run; the tests read them from $ENVF.
 STAFF_KEY=$(openssl rand -hex 32); SHASH=$(cd server && node tools.mjs hash 'staff-pass-123'); ORG=$(psql -X -tA $DB -c "SELECT org_id FROM election.elections WHERE id='$E'")
@@ -47,5 +48,8 @@ A2_SECRET=$A2_SECRET
 A3_SECRET=$A3_SECRET
 P1_SECRET=$P1_SECRET
 EOT
-(cd server && STAFF_KEY=$STAFF_KEY DATABASE_URL="postgresql://app_api:devpass@127.0.0.1/$DB" PEPPER=pepper REQUEST_KEY=rk RECEIPT_KEY=ck ELECTION_PUBKEY=$PUB PORT=3001 DEBUG_API=1 exec node index.mjs >/tmp/live-api.log 2>&1) &
-echo $! > /tmp/live-api.pid; sleep 2; curl -sf http://127.0.0.1:3001/api/elections/$E/info >/dev/null && echo "API up. ELECTION_ID=$E"
+(cd server && STAFF_KEY=$STAFF_KEY DATABASE_URL="postgresql://app_api:devpass@127.0.0.1:${PGPORT:-5432}/$DB" ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" PEPPER=pepper REQUEST_KEY=rk RECEIPT_KEY=ck ELECTION_PUBKEY=$PUB PORT=3001 DEBUG_API=1 exec node index.mjs >/tmp/live-api.log 2>&1) &
+echo $! > /tmp/live-api.pid
+for i in $(seq 1 40); do curl -sf http://127.0.0.1:3001/api/elections/$E/info >/dev/null 2>&1 && { echo "API up. ELECTION_ID=$E"; exit 0; }; sleep 0.5; done
+echo "The API did not start on port 3001 within 20 seconds. Its log (/tmp/live-api.log):" >&2; tail -n 25 /tmp/live-api.log >&2
+echo "If it says EADDRINUSE, an old API is still running: close other Git Bash windows or run  taskkill //F //IM node.exe  (Windows), then try again." >&2; exit 1

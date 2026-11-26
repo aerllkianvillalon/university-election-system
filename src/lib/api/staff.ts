@@ -52,6 +52,13 @@ const MESSAGES: Record<string, string> = {
   GATE_USERNAME_TAKEN: 'That username is already in use.',
   GATE_BAD_DETAILS: 'Use a name, and a username of 3 to 32 lower-case letters, numbers, dots, dashes or underscores.',
   GATE_SELF: 'You cannot do that to your own account.',
+  GATE_LOCKED: 'The election is locked, so this can no longer be changed.',
+  GATE_BAD_SCOPE: 'That “who can vote” rule is not valid.',
+  GATE_BAD_PHOTO: 'That picture could not be used. It must be a JPEG under 256 KB.',
+  GATE_BAD_WINDOW: 'Voting must close after it opens, and the closing time must be in the future.',
+  GATE_VOUCHERS_ISSUED: 'Voucher codes were already issued, so the roll can no longer be cleared.',
+  GATE_EMPTY_ROLL: 'The file has no voters in it.',
+  LAB_DISABLED: 'In-lab voting is not switched on, so every voter must use the online channel.',
   GATE_TOO_FEW_ADMINS: 'That would leave fewer than two active administrators, and the two-person rules need two.',
 };
 export const explain = (code: string | null | undefined): string => (code ? MESSAGES[code] ?? 'That is not allowed right now.' : '');
@@ -68,6 +75,9 @@ async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Pr
   } catch { return { ok: false, code: 'NETWORK', status: 0, message: 'Cannot reach the server. Check your connection and try again.' }; }
 }
 
+export type Scope = { all: true } | { match: Record<string, string> };
+export type SetupPosition = { id: string; title: string; seats: number; minSelections: number; allowAbstain: boolean; scope: Scope; eligible: number; candidates: { id: string; name: string; platform: string | null; hasPhoto: boolean }[] };
+export type SetupOverview = { status: string; opensAt: string | null; closesAt: string | null; electionKeySet: boolean; signingKeySet: boolean; rollCount: number; withoutVoucher: number; attributes: Record<string, string[]>; positions: SetupPosition[] };
 const R = (id: string) => `/api/admin/elections/${id}`;
 export const staff = {
   async login(username: string, password: string): Promise<'mfa' | 'failed' | 'limited' | 'network'> {
@@ -92,6 +102,8 @@ export const staff = {
   confirmAuthenticator: (code: string) => call<{ ok: boolean }>('POST', '/api/staff/authenticator/confirm', { code }),
   newRecoveryCodes: (password: string) => call<{ recoveryCodes: string[] }>('POST', '/api/staff/recovery-codes', { password }),
   // people (administrators)
+  session: () => call<{ expiresAt: string | null }>('GET', '/api/staff/session'),
+  extendSession: () => call<{ expiresAt: string }>('POST', '/api/staff/session/extend'),
   people: () => call<{ staff: Person[]; pending: PersonRequest[] }>('GET', '/api/admin/staff'),
   invite: (name: string, username: string, role: string) => call<Revealed>('POST', '/api/admin/staff/invite', { name, username, role }),
   disable: (id: string) => call<Revealed>('POST', `/api/admin/staff/${id}/disable`),
@@ -113,5 +125,21 @@ export const staff = {
   audit: (before?: number) => call<{ entries: AuditEntry[] }>('GET', `/api/admin/audit?${new URLSearchParams({ limit: '50', ...(before ? { before: String(before) } : {}) })}`),
   auditCheck: () => call<AuditCheck>('GET', '/api/admin/audit/check'),
   resultsStatus: (id: string) => call<ResultsStatus>('GET', `${R(id)}/results`),
+  setup: (id: string) => call<SetupOverview>('GET', `${R(id)}/setup`),
+  setWindow: (id: string, opensAt: string, closesAt: string) => call<{ ok: boolean }>('POST', `${R(id)}/window`, { opensAt, closesAt }),
+  addPosition: (id: string, title: string, seats: number, minSelections: number, allowAbstain: boolean, scope: Scope = { all: true }) => call<{ id: string }>('POST', `${R(id)}/positions`, { title, seats, minSelections, allowAbstain, scope }),
+  editPosition: (id: string, positionId: string, title: string, seats: number, allowAbstain: boolean, scope: Scope) => call<{ ok: boolean }>('POST', `${R(id)}/positions/${positionId}/edit`, { title, seats, allowAbstain, scope }),
+  editCandidate: (id: string, candidateId: string, name: string, platform: string) => call<{ ok: boolean }>('POST', `${R(id)}/candidates/${candidateId}/edit`, { name, platform: platform || null }),
+  setCandidatePhoto: (id: string, candidateId: string, image: string) => call<{ ok: boolean }>('POST', `${R(id)}/candidates/${candidateId}/photo`, { image }),
+  removeCandidatePhoto: (id: string, candidateId: string) => call<{ ok: boolean }>('POST', `${R(id)}/candidates/${candidateId}/photo/remove`),
+  photoUrl: (id: string, candidateId: string, v: string) => `/api/admin/elections/${id}/candidates/${candidateId}/photo?v=${encodeURIComponent(v)}`,
+  addCandidate: (id: string, positionId: string, name: string, platform: string) => call<{ id: string }>('POST', `${R(id)}/candidates`, { positionId, name, ...(platform ? { platform } : {}) }),
+  removePosition: (id: string, positionId: string) => call<{ ok: boolean }>('POST', `${R(id)}/positions/${positionId}/remove`),
+  removeCandidate: (id: string, candidateId: string) => call<{ ok: boolean }>('POST', `${R(id)}/candidates/${candidateId}/remove`),
+  importRoll: (id: string, rows: { studentId: string; email?: string; attrs?: Record<string, string> }[]) => call<{ ok: true; inserted: number } | { ok: false; errors: { row: number; reason: string }[] }>('POST', `${R(id)}/roll`, { rows }),
+  clearRoll: (id: string) => call<{ removed: number }>('POST', `${R(id)}/roll/clear`),
+  issueVouchers: (id: string) => call<{ issued: number; vouchers: { studentId: string; code: string }[] }>('POST', `${R(id)}/vouchers/generate`),
+  setElectionKey: (id: string, publicKey: string) => call<{ ok: boolean; fingerprint: string }>('POST', `${R(id)}/key`, { publicKey }),
+  setSigningKey: (id: string, publicKey: string) => call<{ ok: boolean; fingerprint: string }>('POST', `${R(id)}/signing-key`, { publicKey }),
   importResults: (id: string, results: { body: string; signature: string }) => call<{ chain: string; ballots: number; status: string }>('POST', `${R(id)}/results`, { results }),
 };

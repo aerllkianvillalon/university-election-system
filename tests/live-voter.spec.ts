@@ -13,14 +13,15 @@ test.beforeEach(({ page }) => { page.on('pageerror', (e) => calls.push(`pageerro
 async function register(page: Page, sid: string, voucher: string) {
   await page.goto('/register');
   await page.locator('#student-id').fill(sid); await page.locator('#voucher').fill(voucher); await page.locator('#password').fill(PASSWORD);
+  await page.locator('#pick-program').selectOption(sid === '2026-00002' ? 'BSED' : 'BSIT');   // course must match the roll
   await page.getByRole('checkbox').check(); await page.getByRole('button', { name: /Create/ }).click();
-  await expect(page.getByRole('status')).toBeVisible();
+  await expect(page).toHaveURL(/\/vote$/);
 }
 async function signIn(page: Page, sid: string) {
   await page.goto('/login');
   await page.locator('#identifier').fill(sid); await page.locator('#password').fill(PASSWORD);
   await page.getByRole('button', { name: /^Sign in/ }).click();
-  await expect(page.getByRole('status')).toBeVisible();
+  await expect(page).toHaveURL(/\/vote$/);
 }
 const meStatus = (page: Page) => page.evaluate(async () => (await fetch('/api/me', { credentials: 'same-origin' })).status);
 
@@ -79,16 +80,14 @@ test('voter casts a ballot: pick, multi-pick and abstain; the stored ballot matc
   expect(Object.keys(byTitle).sort()).toEqual(['BSIT Rep', 'President', 'Senators']);
 });
 
-test('after voting: status says voted, and a second ballot is refused with a clear message', async ({ page }) => {
+test('after voting: status says voted, and the ballot page no longer offers a second ballot', async ({ page }) => {
   await signIn(page, '2026-00001');
   await page.goto('/status');
   await expect(page.locator('main')).toContainText(/ballot was recorded/i);
   await page.goto('/vote');
-  await page.getByRole('button', { name: /President 2/ }).click(); await page.getByRole('button', { name: /Next contest/ }).click();
-  await page.getByLabel(/Abstain from this contest/).check(); await page.getByRole('button', { name: /Next contest/ }).click();
-  await page.getByLabel(/Abstain from this contest/).check();
-  await page.getByRole('button', { name: /Review ballot/ }).click(); await page.getByRole('button', { name: /Submit my ballot/ }).click();
-  await expect(page.getByRole('alert')).toContainText(/already voted/i);
+  await expect(page.getByRole('heading', { name: /already voted/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /President 2/ })).toHaveCount(0);
+  // the server refuses a second ballot on its own (covered by the backend suite); here we only check nothing extra was stored
   expect(sql(`SELECT count(*) FROM participation.participation WHERE election_id='${E}'`)).toBe('1');
 });
 

@@ -5,6 +5,10 @@
   "version": "0.1.0",
   "packageManager": "pnpm@11.25.0",
   "scripts": {
+    "start": "node scripts/start.mjs",
+    "stop": "node scripts/stop.mjs",
+    "doctor": "node scripts/doctor.mjs",
+    "code": "bash server/staff-code.sh",
     "dev": "vite --host 0.0.0.0 --port 3000 --strictPort",
     "build": "tsc -b && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",

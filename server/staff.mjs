@@ -46,7 +46,7 @@ export function mountStaff(app, d) {
       rows = rows.map((r) => (r && typeof r === 'object' && (r.channel === undefined || r.channel === null || r.channel === '') ? { ...r, channel: 'ONLINE' } : r)); }
     return run(async (r) => (await q1('SELECT admin.import_roll($1,$2,$3) AS r', [r.params.id, me(r), JSON.stringify(rows ?? null)])).r)(req, res); });
   app.post('/api/admin/elections/:id/positions', A, async (req, res) => { const b = req.body || {};
-    if (!str(b.title, 120) || !Number.isInteger(b.seats) || b.seats < 1 || b.seats > 20 || !Number.isInteger(b.minSelections ?? 0) || typeof (b.scope ?? { all: true }) !== 'object') return bad(res);
+    if (!str(b.title, 120) || !Number.isInteger(b.seats) || b.seats < 1 || b.seats > 20 || !Number.isInteger(b.minSelections ?? 0) || !scopeOk(b.scope ?? { all: true })) return bad(res);
     return run(async (r) => ({ id: (await q1('SELECT admin.add_position($1,$2,$3,$4,$5,$6,$7) AS id', [r.params.id, me(r), b.title, b.seats, b.minSelections ?? 0, b.allowAbstain ?? true, b.scope ?? { all: true }])).id }))(req, res); });
   app.post('/api/admin/elections/:id/candidates', A, async (req, res) => { const b = req.body || {}; if (!str(b.positionId, 36) || !str(b.name, 120) || (b.platform != null && !str(b.platform, 1000))) return bad(res);
     return run(async (r) => ({ id: (await q1('SELECT admin.add_candidate($1,$2,$3,$4,$5) AS id', [r.params.id, me(r), b.positionId, b.name, b.platform ?? null])).id }))(req, res); });
@@ -61,6 +61,9 @@ export function mountStaff(app, d) {
   // Console support: who am I, the approval queue, withdrawing a request, signing out.
   const S = requireStaff('ADMIN', 'PROCTOR');
   app.get('/api/staff/me', S, run(async (req) => ({ ...(await q1('SELECT admin.staff_overview($1) AS o', [me(req)])).o, recoveryCodesLeft: (await q1('SELECT admin.recovery_codes_left($1) AS n', [me(req)])).n, recovered: (await q1('SELECT admin.session_recovered($1) AS r', [sha(cookies(req).ssid)])).r })));
+  app.get('/api/staff/session', S, run(async (req) => ({ expiresAt: (await q1('SELECT admin.staff_session_expiry($1) AS e', [sha(cookies(req).ssid)])).e })));   // lets the console warn before the session ends
+  app.post('/api/staff/session/extend', S, async (req, res) => {   // 15 more minutes, never past 8 hours in total (SQL enforces the cap)
+    try { const e = (await q1('SELECT admin.staff_session_extend($1) AS e', [sha(cookies(req).ssid)])).e; if (!e) return deny(res, 'MFA_REQUIRED'); setCookie(res, 'ssid', cookies(req).ssid, 900); res.json({ expiresAt: e }); } catch (err) { dbErr(res, err); } });
   app.post('/api/staff/logout', async (req, res) => { const sid = cookies(req).ssid; try { if (sid) await pool.query('SELECT admin.staff_close_session($1)', [sha(sid)]); } catch (e) { console.error(e); }
     setCookie(res, 'ssid', '', 0); res.json({ ok: true }); });   // idempotent, and the session is deleted on the server, not just forgotten by the browser
   app.get('/api/admin/elections/:id/approvals', A, run(async (req) => (await q1('SELECT admin.pending_approvals($1,$2) AS a', [req.params.id, me(req)])).a));
@@ -68,6 +71,31 @@ export function mountStaff(app, d) {
   // Results. The signing key is registered before voting (same rule as the election key); a signed tally is checked here, then against the database in SQL.
   app.post('/api/admin/elections/:id/signing-key', A, async (req, res) => { const k = Buffer.from(String(req.body?.publicKey ?? ''), 'base64'); if (k.length !== 32) return bad(res);
     return run(async (r) => { await q1('SELECT admin.set_signing_key($1,$2,$3)', [r.params.id, me(r), k]); return { ok: true, fingerprint: d.sha(k).toString('hex').slice(0, 16) }; })(req, res); });
+  // Setup screens: what is set up so far, the voting times, and taking back a mistake (all refused after the lock in SQL).
+  const uuid = (v) => /^[0-9a-f-]{36}$/i.test(String(v));
+  app.get('/api/admin/elections/:id/setup', A, run(async (req) => (await q1('SELECT admin.setup_overview($1,$2) AS o', [req.params.id, me(req)])).o));
+  app.post('/api/admin/elections/:id/window', A, async (req, res) => { const o = Date.parse(req.body?.opensAt), c = Date.parse(req.body?.closesAt);
+    if (!Number.isFinite(o) || !Number.isFinite(c) || typeof req.body?.opensAt !== 'string' || typeof req.body?.closesAt !== 'string') return bad(res);
+    return run(async (r) => { await q1('SELECT admin.set_window($1,$2,$3,$4)', [r.params.id, me(r), new Date(o).toISOString(), new Date(c).toISOString()]); return { ok: true }; })(req, res); });
+  app.post('/api/admin/elections/:id/positions/:pid/remove', A, async (req, res) => { if (!uuid(req.params.pid)) return bad(res);
+    return run(async (r) => { await q1('SELECT admin.remove_position($1,$2,$3)', [r.params.id, me(r), r.params.pid]); return { ok: true }; })(req, res); });
+  app.post('/api/admin/elections/:id/candidates/:cid/remove', A, async (req, res) => { if (!uuid(req.params.cid)) return bad(res);
+    return run(async (r) => { await q1('SELECT admin.remove_candidate($1,$2,$3)', [r.params.id, me(r), r.params.cid]); return { ok: true }; })(req, res); });
+  const scopeOk = (v) => v && typeof v === 'object' && !Array.isArray(v) && (v.all === true && Object.keys(v).length === 1 || (Object.keys(v).length === 1 && v.match && typeof v.match === 'object' && !Array.isArray(v.match) && Object.keys(v.match).length >= 1 && Object.keys(v.match).length <= 3 && Object.values(v.match).every((x) => str(x, 80))));
+  app.post('/api/admin/elections/:id/positions/:pid/edit', A, async (req, res) => { const b = req.body || {}; if (!uuid(req.params.pid) || !str(b.title, 120) || !Number.isInteger(b.seats) || b.seats < 1 || b.seats > 20 || typeof b.allowAbstain !== 'boolean' || !scopeOk(b.scope)) return bad(res);
+    return run(async (r) => { await q1('SELECT admin.update_position($1,$2,$3,$4,$5,$6,$7)', [r.params.id, me(r), r.params.pid, b.title, b.seats, b.allowAbstain, b.scope]); return { ok: true }; })(req, res); });
+  app.post('/api/admin/elections/:id/candidates/:cid/edit', A, async (req, res) => { const b = req.body || {}; if (!uuid(req.params.cid) || !str(b.name, 120) || (b.platform != null && !str(b.platform, 1000))) return bad(res);
+    return run(async (r) => { await q1('SELECT admin.update_candidate($1,$2,$3,$4,$5)', [r.params.id, me(r), r.params.cid, b.name, b.platform ?? null]); return { ok: true }; })(req, res); });
+  // Photos: the page sends a small JPEG as base64; SQL checks the size and the JPEG signature.
+  app.post('/api/admin/elections/:id/candidates/:cid/photo', A, async (req, res) => { const img = req.body?.image; if (!uuid(req.params.cid) || typeof img !== 'string' || img.length > 360000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(img)) return bad(res);
+    return run(async (r) => { await q1('SELECT admin.set_candidate_photo($1,$2,$3,$4)', [r.params.id, me(r), r.params.cid, Buffer.from(img, 'base64')]); return { ok: true }; })(req, res); });
+  app.post('/api/admin/elections/:id/candidates/:cid/photo/remove', A, async (req, res) => { if (!uuid(req.params.cid)) return bad(res);
+    return run(async (r) => { await q1('SELECT admin.clear_candidate_photo($1,$2,$3)', [r.params.id, me(r), r.params.cid]); return { ok: true }; })(req, res); });
+  app.get('/api/admin/elections/:id/candidates/:cid/photo', A, async (req, res) => { if (!uuid(req.params.cid)) return bad(res);
+    let d; try { d = (await q1('SELECT admin.candidate_photo($1,$2,$3) AS d', [req.params.id, me(req), req.params.cid])).d; } catch { return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Not found.' } }); }
+    if (!d) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Not found.' } });
+    res.set({ 'Content-Type': 'image/jpeg', 'Content-Length': String(d.length), 'Content-Security-Policy': "default-src 'none'; sandbox" }).end(d); });
+  app.post('/api/admin/elections/:id/roll/clear', A, run(async (req) => ({ removed: (await q1('SELECT admin.clear_roll($1,$2) AS n', [req.params.id, me(req)])).n })));
   // Audit trail: newest first, only this organization's entries; the chain check recomputes every link.
   app.get('/api/admin/audit', A, async (req, res) => { const n = Number(req.query.limit ?? 50), before = req.query.before == null ? null : Number(req.query.before), act = req.query.action == null ? null : String(req.query.action);
     if (!Number.isInteger(n) || n < 1 || n > 200 || (before !== null && !Number.isInteger(before)) || (act !== null && !/^[A-Z_]{1,40}$/.test(act))) return bad(res);

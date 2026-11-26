@@ -1,45 +1,62 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, NavLink, Navigate, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, ArrowUpRight, BadgeCheck, Check, CheckCircle2, CircleHelp, ClipboardCheck, Clock3, Eye, EyeOff, Flag, LockKeyhole, LogOut, Menu, Moon, Monitor, ShieldCheck, Sun, Users, Vote } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ArrowUpRight, BadgeCheck, Check, CheckCircle2, CircleHelp, ClipboardCheck, Clock3, Eye, EyeOff, Flag, LockKeyhole, LogOut, Menu, Moon, ShieldCheck, Sun, Users, Vote } from 'lucide-react';
 import { api } from '../lib/api/client';
 import { rankContest } from '../lib/results';
 const StaffLogin=lazy(()=>import('../features/staff/StaffPages').then((m)=>({default:m.StaffLogin})));
 const StaffSetup=lazy(()=>import('../features/staff/StaffPages').then((m)=>({default:m.StaffSetup})));
 const StaffConsole=lazy(()=>import('../features/staff/StaffPages').then((m)=>({default:m.StaffConsole})));
-import { GENERIC_FAILURE_MESSAGE, type BallotDraft, type Candidate, type CertifiedResult, type ResultsProof, type Election, type OrganizationElection, type Receipt, type SelectionMap } from '../lib/api/types';
+import { GENERIC_FAILURE_MESSAGE, type BallotDraft, type Candidate, type Choices, type CertifiedResult, type ResultsProof, type Election, type OrganizationElection, type Receipt, type SelectionMap } from '../lib/api/types';
 import { ActionLink, Button, CandidateCard, Card, Eyebrow, IconBadge, StatusPill } from '../components/ui/Primitives';
 import { HelpPage } from '../features/support/SupportPages';
+import { Assistant } from '../features/assistant/Assistant';
 
 function BrandMark() {
   return <span className="brand-mark"><svg width="25" height="25" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 9h16v11H4zM7 9V5h10v4M8 14l3 3 6-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg></span>;
 }
 
-function Header({ theme, setTheme, contrast, setContrast }: { theme: 'light' | 'dark'; setTheme: (value: 'light' | 'dark') => void; contrast: boolean; setContrast: (value: boolean) => void }) {
+function Header({ theme, setTheme }: { theme: 'light' | 'dark'; setTheme: (value: 'light' | 'dark') => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [loggedIn, setLoggedIn] = useState(false);
   const navigate = useNavigate();
   useEffect(() => { let on = true; void api.hasSession().then((yes) => { if (on && yes) setLoggedIn(true); });   // a reload keeps the cookie, so ask the server
     const onLogin = () => setLoggedIn(true); window.addEventListener('ctu-login', onLogin); return () => { on = false; window.removeEventListener('ctu-login', onLogin); }; }, []);
   const links = [['/election', 'Election'], ['/candidates', 'Candidates'], ['/status', 'My status'], ['/results', 'Results']];
-  async function logOut() { await api.logout(); setLoggedIn(false); navigate('/'); }
+  const menu: [string, string[][]][] = [
+    ['Voting', [['/election', 'Election details'], ['/candidates', 'Candidates'], ['/status', 'My status'], ['/results', 'Results'], ['/register', 'Create an account'], ['/login', 'Sign in']]],
+    ['Need help?', [['/protest', 'File a protest'], ['/account-dispute', 'Account dispute'], ['/claim-account', 'Claim an account'], ['/report-fake-site', 'Report a fake site']]],
+    ['About', [['/legal/privacy', 'Privacy'], ['/legal/terms', 'Terms'], ['/legal/election-rules', 'Election rules'], ['/legal/accessibility', 'Accessibility']]],
+    ['Staff', [['/staff', 'Staff sign in']]],
+  ];
+  const close = () => setMenuOpen(false);
+  useEffect(() => { if (!menuOpen) return; const k = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false); }; document.addEventListener('keydown', k); return () => document.removeEventListener('keydown', k); }, [menuOpen]);
+  async function logOut() { await api.logout(); setLoggedIn(false); setMenuOpen(false); navigate('/'); }
   return <header className="topbar"><div className="topbar-inner">
     <Link className="brand" to="/" aria-label="CTU Danao Student Elections home"><BrandMark/><span className="brand-copy"><strong>CTU DANAO</strong><span>STUDENT ELECTIONS</span></span></Link>
     <nav className="nav-links" aria-label="Main navigation">{links.map(([to, label]) => <NavLink key={to} to={to}>{label}</NavLink>)}</nav>
     <div className="nav-actions">
       <button className="icon-button" type="button" aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? <Moon size={18}/> : <Sun size={18}/>}</button>
-      <button className="icon-button desktop-only" type="button" aria-pressed={contrast} aria-label="Toggle high contrast" onClick={() => setContrast(!contrast)}><Monitor size={17}/></button>
       {loggedIn ? <><ActionLink to="/vote" className="desktop-only">Vote</ActionLink><button className="btn btn-quiet btn-sm" onClick={logOut}><LogOut size={15}/> Sign out</button></> : <ActionLink to="/login" className="desktop-only">Sign in to vote</ActionLink>}
       <button className="icon-button menu-toggle" aria-label={menuOpen ? 'Close navigation menu' : 'Open navigation menu'} aria-expanded={menuOpen} aria-controls="mobile-navigation" onClick={() => setMenuOpen(!menuOpen)}><Menu size={19}/></button>
     </div>
-  </div><nav id="mobile-navigation" className={`nav-mobile ${menuOpen ? 'open' : ''}`} aria-label="Mobile navigation"><NavLink to={loggedIn?'/vote':'/login'} className="nav-vote" onClick={() => setMenuOpen(false)}>{loggedIn?'Vote now':'Sign in to vote'}</NavLink>{links.map(([to, label]) => <NavLink key={to} to={to} onClick={() => setMenuOpen(false)}>{label}</NavLink>)}{loggedIn?<button className="btn btn-quiet" onClick={logOut}><LogOut size={15}/> Sign out</button>:<NavLink to="/login" onClick={() => setMenuOpen(false)}>Sign in</NavLink>}<button className="btn btn-quiet" onClick={() => setContrast(!contrast)}>{contrast ? 'Standard contrast' : 'High contrast'}</button></nav></header>;
+  </div>
+  <nav id="mobile-navigation" className={`nav-mobile menu-panel ${menuOpen ? 'open' : ''}`} aria-label="Site menu">
+    <div className="menu-inner">
+      <NavLink to={loggedIn?'/vote':'/login'} className="nav-vote" onClick={close}>{loggedIn?'Vote now':'Sign in to vote'}</NavLink>
+      <div className="menu-cols">
+        {menu.map(([heading, items]) => <div className="menu-group" key={heading}><h2>{heading}</h2>{items.map(([to, label]) => <NavLink key={to} to={to} onClick={close}>{label}</NavLink>)}</div>)}
+      </div>
+      {loggedIn && <button className="btn btn-quiet menu-out" onClick={logOut}><LogOut size={15}/> Sign out</button>}
+    </div>
+  </nav></header>;
 }
 
 function Footer() {
   return <footer className="footer"><div className="footer-inner"><div><strong>CTU Danao · Student Elections</strong><div>Questions or problems? Contact the Electoral Committee.</div></div><div className="footer-links"><Link to="/legal/privacy">Privacy</Link><Link to="/legal/terms">Terms</Link><Link to="/legal/election-rules">Election rules</Link><Link to="/legal/accessibility">Accessibility</Link><Link to="/protest">File a protest</Link><Link to="/account-dispute">Account dispute</Link><Link to="/claim-account">Claim account</Link><Link to="/report-fake-site">Report a fake site</Link></div></div></footer>;
 }
 
-function PageFrame({ children, theme, setTheme, contrast, setContrast }: { children: ReactNode; theme: 'light' | 'dark'; setTheme: (value: 'light' | 'dark') => void; contrast: boolean; setContrast: (value: boolean) => void }) {
-  return <div className={`site-frame ${theme === 'dark' ? 'theme-dark' : ''}`}><a className="skip-link" href="#main-content">Skip to content</a><Header theme={theme} setTheme={setTheme} contrast={contrast} setContrast={setContrast}/><main className="app-main" id="main-content" tabIndex={-1}>{children}</main><Footer/></div>;
+function PageFrame({ children, theme, setTheme }: { children: ReactNode; theme: 'light' | 'dark'; setTheme: (value: 'light' | 'dark') => void }) {
+  return <div className={`site-frame ${theme === 'dark' ? 'theme-dark' : ''}`}><a className="skip-link" href="#main-content">Skip to content</a><Header theme={theme} setTheme={setTheme}/><main className="app-main" id="main-content" tabIndex={-1}>{children}</main><Footer/><Assistant/></div>;
 }
 
 function Home() {
@@ -111,6 +128,8 @@ function Candidates() {
 
 function AuthPage({ mode }: { mode: 'register' | 'login' | 'forgot' | 'reset' }) {
   const goTo=useNavigate();
+  const [choices,setChoices]=useState<Choices>({});
+  useEffect(()=>{if(mode!=='register')return;let on=true;void api.choices().then((c)=>{if(on)setChoices(c);});return()=>{on=false;};},[mode]);
   const [showPassword,setShowPassword]=useState(false); const [message,setMessage]=useState(''); const [error,setError]=useState(''); const [busy,setBusy]=useState(false);
   // Reset link: the token is read once, taken out of the address bar (history, screenshots, Referer), and checked without being used up.
   const [resetToken]=useState(()=>mode==='reset'?new URLSearchParams(window.location.search).get('token')??'':'');
@@ -124,7 +143,8 @@ function AuthPage({ mode }: { mode: 'register' | 'login' | 'forgot' | 'reset' })
       if(mode==='register'){
         const accepted=form.get('terms')==='on'; const studentId=String(form.get('studentId')||''); const voucher=String(form.get('voucher')||'');
         if(!studentId||!voucher||password.length<8||!accepted) throw new Error(GENERIC_FAILURE_MESSAGE);
-        const result=await api.register({studentId,voucher,password,termsAccepted:accepted});if(!result.ok)throw new Error(api.genericFailure());window.dispatchEvent(new Event('ctu-login'));setMessage('Your account is ready. Opening your ballot…');goTo('/vote');
+        const pick=(k:string)=>String(form.get(k)||'')||undefined;if(Object.values(choices).some((v)=>v&&v.length)&&(['program','year','section'] as const).some((k)=>choices[k]?.length&&!pick(k)))throw new Error('Please choose your course, year and section.');
+        const result=await api.register({studentId,voucher,password,termsAccepted:accepted,program:pick('program'),year:pick('year'),section:pick('section')});if(!result.ok)throw new Error(api.genericFailure());window.dispatchEvent(new Event('ctu-login'));setMessage('Your account is ready. Opening your ballot…');goTo('/vote');
       } else if(mode==='login'){
         const identifier=String(form.get('identifier')||'');if(!identifier||password.length<8)throw new Error(GENERIC_FAILURE_MESSAGE);
         const result=await api.authenticate({identifier,password});if(!result.ok)throw new Error(api.genericFailure());window.dispatchEvent(new Event('ctu-login'));setMessage('Signed in. Opening your ballot…');goTo('/vote');
@@ -143,7 +163,7 @@ function AuthPage({ mode }: { mode: 'register' | 'login' | 'forgot' | 'reset' })
     {mode==='reset'&&link==='checking'&&<p role="status">Checking your link…</p>}
     {mode==='reset'&&link==='invalid'&&<div className="form-message" role="alert">This link is no longer valid. It may have expired or already been used. <Link to="/forgot-password">Request a new link</Link>.</div>}
     {!(mode==='reset'&&link!=='valid')&&<form noValidate onSubmit={handleSubmit}>
-      {mode==='register'&&<><div className="field"><label htmlFor="student-id">Student ID</label><input id="student-id" name="studentId" required autoComplete="username" placeholder="e.g. 2026-00001"/></div><div className="field"><label htmlFor="voucher">Election voucher</label><input id="voucher" name="voucher" required autoComplete="off" placeholder="Enter your voucher"/></div></>}
+      {mode==='register'&&<><div className="field"><label htmlFor="student-id">Student ID</label><input id="student-id" name="studentId" required autoComplete="username" placeholder="e.g. 2026-00001"/></div><div className="field"><label htmlFor="voucher">Election voucher</label><input id="voucher" name="voucher" required autoComplete="off" placeholder="Enter your voucher"/></div>{([['program','Course'],['year','Year level'],['section','Section']] as const).map(([k,label])=>choices[k]?.length?<div className="field" key={k}><label htmlFor={`pick-${k}`}>{label}</label><select id={`pick-${k}`} name={k} required defaultValue=""><option value="" disabled>Choose your {label.toLowerCase()}</option>{choices[k]!.map((v)=>{return <option key={v} value={v}>{v}</option>;})}</select></div>:null)}</>}
       {mode!=='reset'&&mode!=='register'&&<div className="field"><label htmlFor="identifier">Student ID</label><input id="identifier" name="identifier" required autoComplete="username" placeholder="Enter your student ID"/></div>}
       {mode!=='forgot'&&<div className="field"><label htmlFor="password">{mode==='reset'?'New password':'Password'}</label><div style={{position:'relative'}}><input id="password" name="password" type={showPassword?'text':'password'} required minLength={8} autoComplete={mode==='register'||mode==='reset'?'new-password':'current-password'} placeholder="At least 8 characters" style={{paddingRight:58}}/><button type="button" aria-label={showPassword?'Hide password':'Show password'} className="icon-button" style={{position:'absolute',right:4,top:1,width:48,height:48,border:0,background:'transparent'}} onClick={()=>setShowPassword(!showPassword)}>{showPassword?<EyeOff size={17}/>:<Eye size={17}/>}</button></div><small>Use at least 8 characters. Never share your password.</small></div>}
       {mode==='reset'&&<div className="field"><label htmlFor="confirm">Confirm new password</label><input id="confirm" name="confirm" type={showPassword?'text':'password'} required minLength={8} autoComplete="new-password"/></div>}
@@ -161,12 +181,13 @@ function AuthPage({ mode }: { mode: 'register' | 'login' | 'forgot' | 'reset' })
 }
 
 function ReceiptCheck(){
+  const saved=api.sealReceipt();   // this tab's receipt, kept only until you sign out or close the tab
   const [code,setCode]=useState('');const [res,setRes]=useState<'' | 'sealed' | 'recorded' | 'unknown' | 'invalid' | 'busy' | 'error' | 'wait'>('');
   useEffect(()=>{if(window.location.hash==='#check-receipt')document.getElementById('check-receipt')?.scrollIntoView({block:'center'});},[]);
   async function run(e:FormEvent){e.preventDefault();setRes('wait');setRes(await api.checkReceipt(code));}
   const msg:Record<string,[string,string]>={sealed:['success','Found. Your ballot is recorded and confirmed.'],recorded:['success','Found. Your ballot is recorded. Final confirmation is still in progress, so check again later.'],unknown:['warning','No ballot matches this code. Check for typing mistakes. If you are sure it is right, tell the Electoral Committee.'],invalid:['warning','That does not look like a receipt code. It is 64 letters and numbers (0-9, a-f).'],busy:['warning','Too many checks. Please wait a minute and try again.'],error:['warning','Could not reach the server. Check your connection and try again.']};
   return <Card className="receipt-check"><div id="check-receipt"/><Eyebrow>Receipt check</Eyebrow><h2 style={{font:'700 22px var(--display)',margin:'4px 0 6px'}}>Check a receipt code</h2><p style={{color:'var(--muted)',fontSize:13,margin:'0 0 14px'}}>Paste the code you saved when you voted. It only tells you whether the ballot was recorded, never how anyone voted.</p>
-    <form onSubmit={run} noValidate><div className="field"><label htmlFor="receipt-code">Receipt code</label><input id="receipt-code" value={code} onChange={(e)=>setCode(e.target.value)} autoComplete="off" spellCheck={false} placeholder="64-character code" style={{fontFamily:'ui-monospace,monospace'}}/></div><Button type="submit" disabled={!code.trim()||res==='wait'}>{res==='wait'?'Checking…':'Check code'}</Button></form>
+    <form onSubmit={run} noValidate><div className="field"><label htmlFor="receipt-code">Receipt code</label><input id="receipt-code" value={code} onChange={(e)=>setCode(e.target.value)} autoComplete="off" spellCheck={false} placeholder="64-character code" style={{fontFamily:'ui-monospace,monospace'}}/></div><Button type="submit" disabled={!code.trim()||res==='wait'}>{res==='wait'?'Checking…':'Check code'}</Button>{saved&&<Button type="button" variant="secondary" disabled={res==='wait'} onClick={()=>{setCode(saved.hash);setRes('wait');void api.checkReceipt(saved.hash).then(setRes);}}>Check my saved receipt</Button>}</form>
     {msg[res]&&<div className={`alert-box alert-${msg[res][0]}`} role="status" style={{marginTop:14}}>{msg[res][1]}</div>}</Card>;
 }
 
@@ -247,7 +268,7 @@ function ReceiptPage() {
 }
 
 const legalContent:Record<string,{title:string;intro:string;sections:[string,string][]}>={
-  privacy:{title:'Privacy notice',intro:'How this site handles your information while you vote.',sections:[['Identity','Your student ID and voucher are used only to check that you are on the voter roll for this election.'],['Ballot storage','Draft selections stay in your browser session and are cleared on submit, expiry and sign-out. Submitted ballots are stored encrypted and are not linked to your receipt.'],['Questions','Contact the Electoral Committee about how your data is handled.']]},
+  privacy:{title:'Privacy notice',intro:'How this site handles your information while you vote.',sections:[['Identity','Your student ID and voucher are used only to check that you are on the voter roll for this election.'],['Ballot storage','Draft selections stay in your browser session and are cleared on submit, expiry and sign-out. Submitted ballots are stored encrypted and are not linked to your receipt.'],['Help assistant','If the help assistant is switched on, the question you type is sent to an AI service so it can write an answer. The assistant never sees your ballot or who you are, and this site does not store your questions. Do not type your password, voucher or receipt code. The AI service handles the text under its own terms.'],['Questions','Contact the Electoral Committee about how your data is handled.']]},
   terms:{title:'Terms of use',intro:'The terms for using this voting site.',sections:[['Use of this site','Use only your own student ID, voucher and password. Never share them with anyone.'],['Conduct','Use the site respectfully and contact the Electoral Committee for assistance.'],['Official results','Only results that the Electoral Committee has certified and published on this site are official.']]},
   'election-rules':{title:'Election rules',intro:'The rules that apply to this election.',sections:[['Eligibility','Only currently enrolled students on the voter roll for this election can vote.'],['Ballot choices','Seat limits and abstentions are checked by the server, and individual selections are never disclosed.'],['Certification','Results become public only after the certification process is complete.']]},
   accessibility:{title:'Accessibility statement',intro:'This site is designed around keyboard access, clear focus, high contrast, reduced motion, and touch-friendly targets.',sections:[['Support','If you need help voting, contact the Electoral Committee.'],['Feedback','Contact the Electoral Committee with an accessibility concern.']]},
@@ -257,9 +278,9 @@ function LoadingPage(){return <section className="card empty-state" aria-live="p
 function NotFound(){return <Card className="empty-state"><IconBadge><CircleHelp size={20}/></IconBadge><h2>We can’t find that page.</h2><p>Try returning to the election overview.</p><ActionLink to="/">Back to home <ArrowRight size={15}/></ActionLink></Card>;}
 
 export function App(){
-  const [theme,setTheme]=useState<'light'|'dark'>('light');const [contrast,setContrast]=useState(false);
-  useEffect(()=>{document.documentElement.dataset.theme=theme==='dark'?'dark':'light';document.documentElement.dataset.contrast=contrast?'high':'standard';document.documentElement.style.colorScheme=theme;},[theme,contrast]);
-  return <PageFrame theme={theme} setTheme={setTheme} contrast={contrast} setContrast={setContrast}><Routes>
+  const [theme,setTheme]=useState<'light'|'dark'>('light');
+  useEffect(()=>{document.documentElement.dataset.theme=theme==='dark'?'dark':'light';document.documentElement.style.colorScheme=theme;},[theme]);
+  return <PageFrame theme={theme} setTheme={setTheme}><Routes>
     <Route path="/" element={<Home/>}/><Route path="/election" element={<ElectionInfo/>}/><Route path="/candidates" element={<Candidates/>}/>
     <Route path="/register" element={<AuthPage mode="register"/>}/><Route path="/login" element={<AuthPage mode="login"/>}/><Route path="/forgot-password" element={<AuthPage mode="forgot"/>}/><Route path="/reset-password" element={<AuthPage mode="reset"/>}/>
     <Route path="/status" element={<StatusPage/>}/><Route path="/results" element={<ResultsPage/>}/><Route path="/vote" element={<Ballot/>}/><Route path="/receipt" element={<ReceiptPage/>}/>

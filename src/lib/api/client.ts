@@ -1,4 +1,4 @@
-import type { ResultsProof, Lifecycle, ElectionStatus, Organization, ApiResult, AuthRequest, BallotDraft, CertifiedResult, Election, OrganizationElection, Receipt, RegisterRequest, SelectionMap, SupportKind } from './types';
+import type { ResultsProof, Lifecycle, ElectionStatus, Organization, ApiResult, AuthRequest, BallotDraft, CertifiedResult, Election, OrganizationElection, Receipt, Choices, RegisterRequest, SelectionMap, SupportKind } from './types';
 import { GENERIC_FAILURE_MESSAGE } from './types';
 
 const DRAFT_KEY = 'ctu.ballot.v1';
@@ -47,7 +47,7 @@ async function liveAuth(path: string, body: Record<string, unknown>): Promise<Ap
     return res.ok ? { ok: true, data: { displayName: 'Voter' } } : { ok: false, message: GENERIC_FAILURE_MESSAGE };   // one message for every failure
   } catch { return { ok: false, message: GENERIC_FAILURE_MESSAGE }; }
 }
-type LiveContest = { id: string; positionTitle: string; seatCount: number; allowAbstain: boolean; candidates: { id: string; name: string; platformSummary: string | null }[] };
+type LiveContest = { id: string; positionTitle: string; seatCount: number; allowAbstain: boolean; candidates: { id: string; name: string; platformSummary: string | null; hasPhoto?: boolean }[] };
 type LiveInfo = { organization: string; status: string; paused: boolean; frozen: boolean; opensAt: string | null; closesAt: string | null };
 const PHASE: Record<string, Lifecycle> = { DRAFT: 'Draft', CONFIGURED: 'Setup', LOCKED: 'Setup', OPEN: 'Open', CLOSED: 'Closed', TALLIED: 'Closed', CERTIFIED: 'Certified', ARCHIVED: 'Certified' };
 const AVATAR_HUES: [string, string][] = [['#0f766e', '#2a9d8f'], ['#4648b8', '#7a7de0'], ['#b83a58', '#e0708a'], ['#1d6fa5', '#4fa3d9'], ['#7a4fb0', '#a98bdc']];
@@ -82,7 +82,7 @@ async function liveContext(): Promise<OrganizationElection> {
   const election: Election = { id: ELECTION_ID, organizationId: 'live', title: `${name} election`, status, phase, opensAt: when(info?.opensAt), closesAt: when(info?.closesAt), turnout: 0, totalEligible: 0, signedIn,
     contests: (ballotRes.body?.contests ?? []).map((c) => ({ id: c.id, title: c.positionTitle, seats: c.seatCount, allowAbstain: c.allowAbstain,
       description: c.seatCount === 1 ? 'Choose one candidate for this position.' : `Select up to ${c.seatCount} candidates for this position.`,
-      candidates: c.candidates.map((k) => ({ id: k.id, name: k.name, program: '', tag: c.positionTitle.toUpperCase(), photo: avatar(k.name), photoAlt: '', statement: k.platformSummary ?? '' })) })) };
+      candidates: c.candidates.map((k) => ({ id: k.id, name: k.name, program: '', tag: c.positionTitle.toUpperCase(), photo: k.hasPhoto ? `/api/elections/${ELECTION_ID}/candidates/${k.id}/photo` : avatar(k.name), photoAlt: k.hasPhoto ? `Portrait of ${k.name}` : '', statement: k.platformSummary ?? '' })) })) };
   return { organization, election };
 }
 const liveElection = async (): Promise<Election> => (await liveContext()).election;
@@ -134,6 +134,12 @@ export const api = {
       return { ok: true, data: r.body.contests.map((c) => ({ contestId: c.id, title: c.title, certifiedAt: when(r.body!.certifiedAt), seats: c.seats, abstain: c.abstain, candidates: c.candidates })) };
   },
   getResultsProof(): ResultsProof | null { return lastProof; },
+  async assistantEnabled(): Promise<boolean> { const r = await liveGet<{ enabled: boolean }>('/api/assistant'); return r.body?.enabled === true; },
+  async askAssistant(messages: { role: 'user' | 'assistant'; content: string }[]): Promise<{ ok: true; text: string; sources: { title: string; path: string }[] } | { ok: false; reason: 'busy' | 'unavailable' }> {
+    const r = await livePostJson('/api/assistant', { messages }) as { status: number; body: { text?: string; sources?: { title: string; path: string }[] } | null };
+    if (r.status === 200 && r.body?.text) return { ok: true, text: r.body.text, sources: r.body.sources ?? [] };
+    return { ok: false, reason: r.status === 429 ? 'busy' : 'unavailable' };
+  },
   async getStatus(): Promise<{ eligible: boolean; ballot: 'not-started' | 'voted'; message: string; signedIn?: boolean }> {
     { const me = await liveGet<{ hasVoted: boolean }>('/api/me');
       if (!me.body) return { eligible: false, ballot: 'not-started', message: 'Sign in to see your voting status.', signedIn: false };
@@ -188,9 +194,10 @@ export const api = {
     return liveAuth('/api/auth/login', { studentId: request.identifier, password: request.password });
   },
   async register(request: RegisterRequest): Promise<ApiResult<{ displayName: string }>> {
-    { const r = await liveAuth('/api/auth/register', { studentId: request.studentId, voucher: request.voucher, password: request.password, termsAccepted: request.termsAccepted });
+    { const r = await liveAuth('/api/auth/register', { studentId: request.studentId, voucher: request.voucher, password: request.password, termsAccepted: request.termsAccepted, program: request.program, year: request.year, section: request.section });
       return r.ok ? liveAuth('/api/auth/login', { studentId: request.studentId, password: request.password }) : r; }
   },
+  async choices(): Promise<Choices> { const r = await liveGet<Choices>(`/api/elections/${ELECTION_ID}/choices`); return r.status === 200 && r.body ? r.body : {}; },
   async requestPasswordReset(identifier: string): Promise<ApiResult<{ message: string }>> {
     { const r = await liveAuth('/api/auth/forgot', { studentId: identifier }); return r.ok || r.message.startsWith('Too many') ? (r.ok ? { ok: true, data: { message: SUPPORT_DONE } } : r) : { ok: true, data: { message: SUPPORT_DONE } }; }
   },

@@ -2,6 +2,7 @@
 // database (never from the web server). Nothing here can sign anyone in: it only creates an account that has no password yet, and prints a one-time
 // setup code. The person opens /staff/setup, chooses their own password and scans their own authenticator.
 //   DATABASE_URL=postgresql://owner@host/db PEPPER=... node server/staff-admin.mjs create-org  --name "BS IT Society" --slug bsit
+//   ...                                                   node server/staff-admin.mjs create-election --org bsit                               (an empty DRAFT election; prints its id for VITE_ELECTION_ID)
 //   ...                                                   node server/staff-admin.mjs invite      --org bsit --username maria --name "Maria Santos" --role ADMIN [--days 2]
 //   ...                                                   node server/staff-admin.mjs reinvite    --username maria [--days 2]      (lost phone and recovery codes, nobody left to approve)
 //   ...                                                   node server/staff-admin.mjs disable     --username maria                  (break-glass; recorded in the audit log)
@@ -15,6 +16,10 @@ const show = (c, username) => console.log(`\nSetup code for ${username}: ${c.cod
 try {
   if (cmd === 'create-org') { if (!a.name || !/^[a-z0-9-]{2,40}$/.test(a.slug ?? '')) die('usage: create-org --name <name> --slug <lowercase-slug>');
     await db.query('INSERT INTO org.organizations(slug, name) VALUES ($1, $2)', [a.slug, a.name]); console.log(`OK organization ${a.slug} created`); }
+  else if (cmd === 'create-election') { const org = (await db.query('SELECT id FROM org.organizations WHERE slug = $1', [a.org])).rows[0]; if (!org) die('no such organization');
+    const e = (await db.query("INSERT INTO election.elections(org_id, status) VALUES ($1, 'DRAFT') RETURNING id", [org.id])).rows[0].id;
+    await db.query("INSERT INTO ops.audit(election_id, action, detail) VALUES ($1, 'ELECTION_CREATE', $2)", [e, { via: 'staff-admin' }]);
+    console.log(`OK election ${e} created (DRAFT). Build the site with VITE_ELECTION_ID=${e}; the organization's administrators set it up under Setup in /staff.`); }
   else if (cmd === 'invite') { const org = (await db.query('SELECT id FROM org.organizations WHERE slug = $1', [a.org])).rows[0]; if (!org) die('no such organization');
     const c = generateSetupCode(process.env.PEPPER); await db.query('SELECT admin.invite_staff($1, NULL, $2, $3, $4, $5, $6)', [org.id, a.name, a.username, a.role ?? 'ADMIN', c.hash, days]); show(c, a.username); }
   else if (cmd === 'reinvite') { const t = (await db.query('SELECT id, org_id FROM admin.admins WHERE username = $1', [a.username])).rows[0]; if (!t) die('no such account');
@@ -26,5 +31,5 @@ try {
   else if (cmd === 'disable') { const t = (await db.query('SELECT id FROM admin.admins WHERE username = $1', [a.username])).rows[0]; if (!t) die('no such account');
     await db.query('BEGIN'); await db.query("DELETE FROM admin.staff_sessions WHERE staff_id = $1", [t.id]); await db.query("UPDATE admin.admins SET status = 'DISABLED' WHERE id = $1", [t.id]);
     await db.query("INSERT INTO ops.audit(action, detail) VALUES ('STAFF_DISABLE_BREAK_GLASS', $1)", [{ staff_id: t.id }]); await db.query('COMMIT'); console.log(`OK ${a.username} disabled`); }
-  else die('usage: create-org | invite | reinvite | disable (see the comments at the top of this file)');
+  else die('usage: create-org | create-election | invite | reinvite | disable (see the comments at the top of this file)');
 } catch (e) { await db.query('ROLLBACK').catch(() => {}); die(String(e.message).replace(/^GATE:/, 'refused: ')); } finally { await db.end(); }

@@ -21,7 +21,8 @@ for (const vp of [{ name: 'mobile', width: 390, height: 844, n: 5 }, { name: 'de
     test('signed in: candidates, every ballot step, review, receipt, status', async ({ page }) => {
       await page.goto('/register');
       await page.locator('#student-id').fill(`2026-0000${vp.n}`); await page.locator('#voucher').fill(`DEMO-${vp.n}`); await page.locator('#password').fill('a11y voter password 5');
-      await page.getByRole('checkbox').check(); await page.getByRole('button', { name: /Create/ }).click(); await expect(page.getByRole('status')).toBeVisible();
+      await page.locator('#pick-program').selectOption('BSIT');
+      await page.getByRole('checkbox').check(); await page.getByRole('button', { name: /Create/ }).click(); await expect(page).toHaveURL(/\/vote$/);
       await page.goto('/candidates'); await axe(page, '/candidates (signed in)');
       await page.goto('/status'); await axe(page, '/status (signed in)');
       await page.goto('/vote');

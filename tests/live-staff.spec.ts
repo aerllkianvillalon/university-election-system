@@ -6,6 +6,8 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const DB = process.env.LIVE_DB ?? 'evlive', E = process.env.ELECTION_ID ?? '', W = process.env.CEREMONY_DIR ?? '';
 const sql = (q: string) => execFileSync('psql', ['-X', '-tA', DB, '-c', q]).toString().trim();
@@ -16,7 +18,7 @@ test.describe.configure({ mode: 'serial' });
 async function signIn(page: Page, user: string, secret: string) {
   await page.goto('/staff/login');
   await page.getByLabel('Username').fill(user); await page.getByLabel('Password').fill(PW); await page.getByRole('button', { name: 'Continue' }).click();
-  await page.getByLabel('6-digit code').fill(totp(secret)); await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByLabel('6-digit code').fill(totp(secret));   // the sixth digit signs in by itself
 }
 async function axe(page: Page, label: string) {
   const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
@@ -26,8 +28,14 @@ const flash = (page: Page) => page.getByRole('status').or(page.getByRole('alert'
 async function request(page: Page, action: RegExp, then = 'Send request') {
   await page.getByRole('button', { name: action }).click(); await page.getByRole('button', { name: then, exact: true }).click();
 }
-const approve = async (page: Page) => { await page.getByRole('button', { name: /^Approve \S/ }).first().click(); await page.getByRole('button', { name: 'Approve', exact: true }).click(); };
-const pill = (page: Page, text: string) => page.locator('#summary').getByText(text, { exact: true });
+// Reversible actions (pause, resume, extend, lift the freeze) are approved with one click; the others ask for a confirmation first.
+const approve = async (page: Page) => {
+  await page.getByRole('button', { name: /^Approve \S/ }).first().click();
+  const confirm = page.getByRole('button', { name: 'Approve', exact: true });
+  if (await confirm.waitFor({ state: 'visible', timeout: 1500 }).then(() => true, () => false)) await confirm.click();
+};
+const go = (p: Page, id: string) => p.evaluate((h) => { window.location.hash = h; }, id);   // the console shows one section at a time
+const pill = (page: Page, text: string) => page.locator('.status-strip').getByText(text, { exact: true });
 
 let c1: BrowserContext, c2: BrowserContext, a1: Page, a2: Page;
 test.beforeAll(async ({ browser }: { browser: Browser }) => { c1 = await browser.newContext(); c2 = await browser.newContext(); a1 = await c1.newPage(); a2 = await c2.newPage(); });
@@ -35,13 +43,13 @@ test.afterAll(async () => { await c1?.close(); await c2?.close(); });
 
 test('sign-in refuses a wrong password and a wrong code, and the console needs a session', async ({ browser }) => {
   const ctx = await browser.newContext(), page = await ctx.newPage();
-  await page.goto('/staff'); await expect(page).toHaveURL(/\/staff\/login/); await expect(page.getByText('Your session ended')).toBeVisible();
+  await page.goto('/staff'); await expect(page).toHaveURL(/\/staff\/login/); await expect(page.getByText(/signed out after a few minutes/)).toBeVisible();
   await axe(page, 'staff sign-in, password step');
   await page.getByLabel('Username').fill('a3'); await page.getByLabel('Password').fill('not the password'); await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByRole('alert')).toContainText('Check your username and password');
   await page.getByLabel('Password').fill(PW); await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByLabel('6-digit code')).toBeVisible(); await axe(page, 'staff sign-in, code step');
-  await page.getByLabel('6-digit code').fill('000000'); await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByLabel('6-digit code').fill('000000');   // sends itself on the sixth digit
   await expect(page.getByRole('alert')).toContainText('did not work');
   expect(await page.evaluate(async () => (await fetch('/api/staff/me')).status)).toBe(401);       // a password alone is not a session
   await ctx.close();
@@ -66,6 +74,7 @@ test('two administrators sign in; the summary shows the real state, readiness an
 });
 
 test('pause needs a second person: the requester cannot approve; the other administrator can', async () => {
+  await go(a1, 'controls'); await go(a2, 'controls');
   await request(a1, /Request: Pause voting/);
   await expect(flash(a1)).toContainText('A different administrator has to approve');
   const mine = a1.locator('#controls').getByText(/Pause voting · requested by Admin One \(you\)/); await expect(mine).toBeVisible();
@@ -111,7 +120,7 @@ test('a freeze is started by one administrator and has to be confirmed by a diff
 });
 
 test('support queue: filing is visible, report addresses are inert text, status and note are saved, claim codes are shown once', async () => {
-  await a1.reload(); const list = a1.getByRole('list', { name: 'Support requests' });
+  await go(a1, 'support'); await a1.reload(); const list = a1.getByRole('list', { name: 'Support requests' });
   await expect(list.locator('> li').first()).toBeVisible();
   await a1.getByLabel('Show kind').selectOption('report');
   await expect(list.locator('> li')).toHaveCount(Number(sql(`SELECT count(*) FROM support.requests WHERE kind='report'`)));
@@ -134,9 +143,9 @@ test('support queue: filing is visible, report addresses are inert text, status 
 });
 
 test('closing, the real tally, forged files refused, the genuine import and certification, all through the console', async () => {
-  await request(a1, /Request: Close voting/); await a2.reload(); await approve(a2);
+  await go(a1, 'controls'); await go(a2, 'controls'); await request(a1, /Request: Close voting/); await a2.reload(); await approve(a2);
   await expect(flash(a2)).toContainText('Done: Close voting'); await expect(pill(a2, 'Closed')).toBeVisible();
-  const inbox = Number(sql('SELECT count(*) FROM ballots.inbox')); expect(inbox).toBeGreaterThan(0);
+  await go(a2, 'results'); const inbox = Number(sql('SELECT count(*) FROM ballots.inbox')); expect(inbox).toBeGreaterThan(0);
   await expect(a2.locator('#results')).toContainText(`${inbox} ballots waiting to be sealed`); await expect(a2.getByText('No ballots in any chain yet.')).toBeVisible();
   expect(await a2.evaluate(async (id) => (await fetch(`/api/elections/${id}/results`)).json(), E)).toEqual({ published: false, status: 'CLOSED' });
   await a2.goto('/results'); await expect(a2.getByRole('heading', { name: /not available yet/i })).toBeVisible();
@@ -145,16 +154,16 @@ test('closing, the real tally, forged files refused, the genuine import and cert
   const dump = JSON.parse(execFileSync('node', ['server/inbox-dump.mjs'], { env: process.env }).toString()) as { selections: { contestId: string; candidateIds: string[]; abstain: boolean }[] }[];
   const title = (id: string) => sql(`SELECT title FROM election.positions WHERE id='${id}'`), cname = (id: string) => sql(`SELECT name FROM election.candidates WHERE id='${id}'`);
   const expected: Record<string, { abstain: number; candidates: Record<string, number> }> = {};
-  for (const t of sql(`SELECT title FROM election.positions WHERE election_id='${E}'`).split('\n')) expected[t] = { abstain: 0, candidates: Object.fromEntries(sql(`SELECT c.name FROM election.candidates c JOIN election.positions p ON p.id=c.position_id WHERE p.title='${t}'`).split('\n').map((n) => [n, 0])) };
+  for (const t of sql(`SELECT title FROM election.positions WHERE election_id='${E}'`).split(/\r?\n/)) expected[t] = { abstain: 0, candidates: Object.fromEntries(sql(`SELECT c.name FROM election.candidates c JOIN election.positions p ON p.id=c.position_id WHERE p.title='${t}'`).split(/\r?\n/).map((n) => [n, 0])) };
   for (const b of dump) for (const s of b.selections) { const t = title(s.contestId); if (s.abstain) expected[t].abstain++; for (const id of s.candidateIds) expected[t].candidates[cname(id)]++; }
-  fs.writeFileSync('/tmp/live-expected.json', JSON.stringify({ ballots: dump.length, expected }));
-  const env = { ...process.env, PGHOST: '/var/run/postgresql', PGUSER: process.env.PGUSER ?? execFileSync('id', ['-un']).toString().trim() }, ev = 'packages/cli/ev.mjs';
+  fs.writeFileSync(path.join(os.tmpdir(), 'live-expected.json'), JSON.stringify({ ballots: dump.length, expected }));
+  const env = { ...process.env, PGHOST: process.env.PGHOST ?? '/var/run/postgresql', PGUSER: process.env.PGUSER ?? execFileSync('id', ['-un']).toString().trim() }, ev = 'packages/cli/ev.mjs';
   execFileSync('psql', ['-X', '-q', DB, '-c', `CALL ballots.seal('${E}','main',1,true)`]);
   execFileSync('node', [ev, 'export-ballots', '--db', `postgresql:///${DB}`, '--election', E, '--out', `${W}/export.json`], { env });
   execFileSync('node', [ev, 'tally', '--ballots', `${W}/export.json`, '--shares', [1, 3, 5].map((i) => `${W}/share-${i}.txt`).join(','), '--sign', `${W}/signing.key`, '--out', `${W}/results.json`], { env });
   const genuine = fs.readFileSync(`${W}/results.json`, 'utf8'), parsed = JSON.parse(genuine) as { body: string; signature: string };
 
-  await a1.reload(); await expect(a1.getByRole('cell', { name: 'Not imported yet' })).toBeVisible(); await expect(a1.getByRole('row', { name: new RegExp(`main ${dump.length}`) })).toBeVisible();
+  await go(a1, 'results'); await a1.reload(); await expect(a1.getByRole('cell', { name: 'Not imported yet' })).toBeVisible(); await expect(a1.getByRole('row', { name: new RegExp(`main ${dump.length}`) })).toBeVisible();
   const file = a1.getByLabel('Results file (results.json)');
   await file.setInputFiles({ name: 'notes.json', mimeType: 'application/json', buffer: Buffer.from('{"hello":"world"}') });
   await expect(a1.getByRole('alert')).toContainText('not a results file'); await expect(a1.getByRole('button', { name: 'Import tally' })).toBeDisabled();
@@ -173,14 +182,14 @@ test('closing, the real tally, forged files refused, the genuine import and cert
   await expect(a1.getByRole('alert').last()).toContainText('already imported');
   await a1.goto('/results'); await expect(a1.getByRole('heading', { name: /not available yet/i })).toBeVisible();   // tallied is still not public
 
-  await a1.goto('/staff'); await request(a1, /Request: Certify the results/); await a2.goto('/staff'); await approve(a2);
+  await a1.goto('/staff#controls'); await request(a1, /Request: Certify the results/); await a2.goto('/staff#controls'); await approve(a2);
   await expect(flash(a2)).toContainText('Done: Certify the results'); await expect(pill(a2, 'Certified')).toBeVisible();
   expect(sql(`SELECT status FROM election.elections WHERE id='${E}'`)).toBe('CERTIFIED');
-  await expect(a2.getByRole('link', { name: 'See the public results page' })).toBeVisible(); await expect(a2.getByRole('button', { name: /Request/ })).toHaveCount(0);   // nothing left to do
+  await go(a2, 'results'); await expect(a2.getByRole('link', { name: 'See the public results page' })).toBeVisible(); await expect(a2.getByRole('button', { name: /Request/ })).toHaveCount(0);   // nothing left to do
 });
 
 test('audit log: the day\'s actions are listed with who did them, and the chain check says intact', async () => {
-  await a1.reload(); const sec = a1.locator('#audit');
+  await go(a1, 'audit'); await a1.reload(); const sec = a1.locator('#audit');
   await expect(sec.getByRole('heading', { name: 'What was done, and by whom' })).toBeVisible();
   await expect(sec.getByRole('row', { name: /certified/i }).first()).toBeVisible();                 // the certification this very spec performed
   await expect(sec.getByRole('row', { name: /results imported/i }).first()).toContainText('a');   // names the administrator who did it

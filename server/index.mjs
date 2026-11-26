@@ -20,7 +20,7 @@ const app = express(); app.disable('x-powered-by');
 // Behind a reverse proxy every request would otherwise appear to come from the proxy, and all IP rate limits would be shared. TRUST_PROXY = number of proxy hops (e.g. 1).
 if (process.env.TRUST_PROXY) { const h = Number(process.env.TRUST_PROXY); if (!Number.isInteger(h) || h < 1 || h > 5) throw new Error('TRUST_PROXY must be a whole number of proxy hops from 1 to 5'); app.set('trust proxy', h); }
 for (const m of ['get', 'post', 'put', 'delete']) { const orig = app[m].bind(app);   // Express 4 lets one rejected promise kill the process; this turns it into a 500 for every route, staff and lab routes included
-  app[m] = (path, ...handlers) => handlers.length === 0 ? orig(path) : orig(path, ...handlers.map((fn) => (typeof fn === 'function' && fn.length < 4 ? (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next) : fn))); } app.use('/api/admin/elections/:id/roll', express.json({ limit: '2mb' })); app.use('/api/admin/elections/:id/results', express.json({ limit: '1mb' }));   // a signed tally for a large election exceeds the 32 KB default   // roll uploads are larger than other bodies
+  app[m] = (path, ...handlers) => handlers.length === 0 ? orig(path) : orig(path, ...handlers.map((fn) => (typeof fn === 'function' && fn.length < 4 ? (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next) : fn))); } app.use('/api/admin/elections/:id/roll', express.json({ limit: '2mb' })); app.use('/api/admin/elections/:id/candidates/:cid/photo', express.json({ limit: '512kb' })); app.use('/api/admin/elections/:id/results', express.json({ limit: '1mb' }));   // a signed tally for a large election exceeds the 32 KB default   // roll uploads are larger than other bodies
 app.use(express.json({ limit: '32kb' }));
 app.use((req, res, next) => { res.set({ 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' }); next(); });
 app.get('/api/csrf', (req, res) => { const token = crypto.randomBytes(24).toString('base64url'); setCookie(res, 'csrf', token, 3600); res.json({ token }); });
@@ -36,7 +36,8 @@ app.post('/api/auth/register', async (req, res) => {
   try {
     if (str(b.electionId, 36) && str(b.studentId, 32) && str(b.voucher, 64) && str(b.password) && b.password.length >= 8 && b.termsAccepted === true) {
       const ph = await hash(b.password);
-      ok = !!(await pool.query('SELECT identity.register($1,$2,$3,$4) AS id', [b.electionId, b.studentId, hm(PEPPER, b.voucher), ph])).rows[0].id;
+      const claims = {}; for (const k of ['program', 'year', 'section']) if (typeof b[k] === 'string' && b[k].length && b[k].length <= 40) claims[k] = b[k];
+      ok = !!(await pool.query('SELECT identity.register_checked($1,$2,$3,$4,$5) AS id', [b.electionId, b.studentId, hm(PEPPER, b.voucher), ph, JSON.stringify(claims)])).rows[0].id;
     }
   } catch (e) { ok = false; if (process.env.DEBUG_API) console.error(e); }
   await sleepTo(t0, 500); res.status(ok ? 200 : 400).json(ok ? { ok: true } : FAIL);
@@ -88,8 +89,9 @@ const session = async (req) => { const sid = cookies(req).sid;
 async function contestsFor(electionId, voterId) {
   const ps = (await pool.query('SELECT * FROM election.voter_contests($1,$2)', [electionId, voterId])).rows;
   const cs = (await pool.query('SELECT id, position_id, name, platform FROM election.candidates WHERE position_id = ANY($1) AND withdrawn_at IS NULL ORDER BY name', [ps.map((p) => p.id)])).rows;
+  const withPhoto = new Set((await pool.query('SELECT * FROM election.candidates_with_photo($1)', [cs.map((c) => c.id)])).rows.map((r) => r.candidates_with_photo));
   return ps.map((p) => ({ id: p.id, positionTitle: p.title, seatCount: p.seats, minSelections: p.min_sel, maxSelections: p.seats, allowAbstain: p.allow_abstain,
-    candidates: cs.filter((c) => c.position_id === p.id).map((c) => ({ id: c.id, name: c.name, platformSummary: c.platform })) }));
+    candidates: cs.filter((c) => c.position_id === p.id).map((c) => ({ id: c.id, name: c.name, platformSummary: c.platform, hasPhoto: withPhoto.has(c.id) })) }));
 }
 function validSelections(contests, sel) {
   if (!Array.isArray(sel) || sel.length !== contests.length) return false;
@@ -120,8 +122,14 @@ app.post('/api/elections/:id/ballot', async (req, res) => {
   res.status(409).json({ error: { code: out, message: 'Your vote could not be recorded.' } });
 });
 const isUuid = (v) => /^[0-9a-f-]{36}$/i.test(String(v)), NOT_FOUND = { error: { code: 'NOT_FOUND', message: 'Not found.' } };
+// A candidate's photo (only after the election is locked; staff see drafts through the staff route). Always served as a plain JPEG.
+app.get('/api/elections/:id/candidates/:cid/photo', async (req, res) => { if (!isUuid(req.params.id) || !isUuid(req.params.cid)) return res.status(404).json(NOT_FOUND);
+  const row = (await pool.query('SELECT election.candidate_photo_public($1,$2) AS d', [req.params.id, req.params.cid])).rows[0]; if (!row?.d) return res.status(404).json(NOT_FOUND);
+  res.set({ 'Content-Type': 'image/jpeg', 'Content-Length': String(row.d.length), 'Cache-Control': 'public, max-age=300', 'Content-Security-Policy': "default-src 'none'; sandbox" }).end(row.d); });
 app.get('/api/me', async (req, res) => { const s = await session(req); if (!s) return res.status(401).json({ error: { code: 'UNAUTHENTICATED', message: 'Sign in to continue.' } });
   res.json({ electionId: s.election_id, hasVoted: (await pool.query('SELECT election.has_voted($1,$2,1) AS v', [s.election_id, s.voter_id])).rows[0].v }); });
+app.get('/api/elections/:id/choices', async (req, res) => { if (!isUuid(req.params.id)) return res.status(404).json(NOT_FOUND); if (!(await allow(`choices:ip:${req.ip}`, 60, 60))) return tooMany(res);
+  try { res.json((await pool.query('SELECT election.public_choices($1) AS c', [req.params.id])).rows[0].c); } catch { res.json({}); } });
 app.get('/api/elections/:id/info', async (req, res) => { if (!isUuid(req.params.id)) return res.status(404).json(NOT_FOUND); if (!(await allow(`info:ip:${req.ip}`, 120, 60))) return tooMany(res);
   const i = (await pool.query('SELECT election.public_info($1) AS i', [req.params.id])).rows[0].i; i ? res.json(i) : res.status(404).json(NOT_FOUND); });
 app.get('/api/elections/:id/results', async (req, res) => {   // public; nothing but the status until the election is certified
@@ -160,6 +168,7 @@ app.post('/api/support/:kind', safe(async (req, res) => {
     if (r === 'NO_ELECTION') return res.status(400).json(BAD_FORM); }   // otherwise a reference collision, so retry with a new one
   res.status(503).json({ error: { code: 'TRY_AGAIN', message: 'Please try again.' } });
 }));
+(await import('./assistant.mjs')).mountAssistant(app, { allow, tooMany });   // on only when ANTHROPIC_API_KEY is set
 if (process.env.STAFF_KEY) { // staff, admin and lab HTTP are enabled only when their keys are configured
   // In-lab voting is a later phase. It is OFF unless LAB_ENABLED=1 (and LAB_SESSION_KEY is set); everything it needs stays in the database and in server/lab.mjs.
   const deps = { LAB_ENABLED: process.env.LAB_ENABLED === '1', pool, sha, hm, cookies, setCookie, str, allow, tooMany, verify, DUMMY, crypto, sleepTo, FAIL, sodium, contestsFor, validSelections, ELECTION_PUBKEY };

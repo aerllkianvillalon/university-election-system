@@ -14,17 +14,21 @@ Not built:
 - [ ] (parked with the Lab Kit) Kiosk and proctor screens on live endpoints (the old mock screens were removed with the demo mode and need to be built fresh). Admin screens are done: `/staff`.
 - [ ] Organization and election chooser (live mode assumes one election, `VITE_ELECTION_ID`; the id in the URL is ignored).
 - [ ] Signed-in display name for voters (`/api/me` has none) and candidate photos in live mode (placeholder with empty alt text today).
-- [ ] Freeze countdown, rate-limited state, ballot idle-warning dialog.
+- [ ] Freeze countdown, rate-limited state.
+- [x] Ballot session warning (last 2 minutes, "I need more time"), draft survives a reload and resumes at the first unanswered contest, receipt Copy/Download/Print, receipt lookup on the status page, closed/not-open/already-voted states on home and ballot, sign-in help. Sign-in and register now go straight to the ballot (tests updated to expect `/vote`; the live suite has not been re-run since).
 - [ ] Route lazy-loading for the voter routes (only the staff console is lazy), per-route axe re-run for any new voter screen, a Content-Security-Policy.
-- [ ] The chatbot beyond a scripted stub (and its backend, section 4).
+- [x] Help assistant (v14 of this round): `server/assistant.mjs` + `assistant-faq.md`, widget in `src/features/assistant`. Still to do: committee review of the FAQ text, data-privacy sign-off, a live test with a real key, and a Filipino/Cebuano check of its answers.
 - [ ] Candidate order: the server returns `ballotSeed` and the client ignores it; candidates are alphabetical. Randomize per voter if the rules require it **[ratify]**.
 - [x] Forgot-password and sign-in said "Student ID or email" but the server only looks up Student ID. Both now say "Student ID". Looking up by email is not built.
 - [ ] Reset/claim success should tell the voter their roll email will be notified (once email exists).
 Staff console gaps (it handles operate-and-oversee; setup is still API or CLI):
-- [ ] Setup screens: roll import, positions, candidates, scope rules, voucher issuing, key registration (election key, signing key), opening and closing times.
+- [x] Setup screens (v22, console section "Setup"): voting times, positions and candidates (bulk add, remove), voter roll import from CSV/paste with preview and row errors, voucher issuing (codes shown once, saved as a file), election and signing key registration. Migration 0018, `db/tests/setup_screens.sql` (passes on Postgres 16), routes in `server/staff.mjs` (syntax-checked only; not run against a live API). v23 added: edit a position (name, seats, abstain, who can vote) or a candidate (name, statement), candidate photos (JPEG shrunk to 400 px in the browser, stored in the database, public only once locked), and "who can vote" rules from extra roll columns (e.g. program, year) with an eligible-voter count and a warning at zero (migration 0019, `db/tests/setup_edit.sql`). `node server/staff-admin.mjs create-election --org <slug>` creates an empty election from the terminal. Deliberately NOT done over the web: creating organizations or first administrators (needs a platform-operator role, a security decision for the committee **[ratify]**) and creating more than one election (the API seals every ballot with one `ELECTION_PUBKEY` from its environment and the site serves one `VITE_ELECTION_ID`). Still open: more than one scope condition per position in the screen (the database allows up to three), a photo cropper, extending a voucher's 7-day life.
 - [x] Audit log reader (console section 06: newest first, paging, "Check the chain"). Not built: filter controls in the screen (the API has `action` and `before`), export.
-- [ ] "A request is waiting for you" notification (email, plus a badge in the console), auto-refresh, and a warning before the 15-minute session ends (today it silently returns to sign-in and loses anything half-typed).
-- [ ] QR code for authenticator setup (today: typed key plus an `otpauth://` link).
+- [x] Console badge, banner and tab-title count when a request is waiting for you (polls every 30 s); warning 2 minutes before the session ends with "Stay signed in" (extends 15 minutes at a time, 8 hours at most; migration 0017, `POST /api/staff/session/extend`). Still open: the email notice (section 3), auto-refresh of the lists.
+- [x] Quick wins (v20): "Check my saved receipt" button, one-click Approve in the banner for reversible actions when exactly one request waits, one new-password field with a Show toggle, claim-code field keeps focus, staff username remembered only if the box is ticked. Deliberately NOT done: ballot auto-advance, dropping the terms checkbox, auto-copying claim codes, remembering the voter's Student ID.
+- [x] Staff efficiency (v18): one-click approve for pause/resume/extend/lift-freeze (final actions still confirm), support queue opens on New with Start review / Mark resolved / Dismiss buttons, lists refresh when a new request arrives, section tabs stay in view while scrolling.
+- [x] Staff friendliness (v17): username remembered, show-password, 6-digit box that takes a pasted "123 456" and signs in on the sixth digit, activity keeps the session alive (idle people get a warning), Copy / Save-as-file for recovery, setup and claim codes, a "Next:" line on the summary. Not yet user-tested with real staff.
+- [x] QR code for authenticator setup (`src/lib/qr.ts`, `tests/qr.test.ts`; the typed key stays as a fallback). Still open: passkeys (WebAuthn) as a faster second step; security-critical, needs real devices to test **[ratify]**.
 - [ ] Observer/watcher screens; proctor screens.
 - [ ] A screen for tally import is done; a screen to run or guide the offline steps (seal, export, tally) is not: today they are CLI steps with no runbook.
 - [ ] Support queue: bot protection on the public forms (rate limits only today), bulk actions.
@@ -63,7 +67,6 @@ Staff console gaps (it handles operate-and-oversee; setup is still API or CLI):
 - [ ] Package spec document and test vectors; `age` encryption (libsodium is used today).
 
 ## 5. Hardening and operations
-- [ ] Chatbot backend.
 - [ ] Backups every 15 minutes with restore drills.
 - [ ] Off-host status page, alerts, signed hourly checkpoints, the hourly verifier job.
 - [ ] Load tests (6,000 voters), lab capacity test, chaos tests, security scans in CI.

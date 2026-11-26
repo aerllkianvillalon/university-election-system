@@ -5,12 +5,14 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { rankContest } from '../src/lib/results';
 
 const DB = process.env.LIVE_DB ?? 'evlive', E = process.env.ELECTION_ID ?? '';
 const sql = (q: string) => execFileSync('psql', ['-X', '-tA', DB, '-c', q]).toString().trim();
 // read lazily: the staff spec writes this file while the suite runs, and Playwright loads every spec file before it starts
-const counts = () => JSON.parse(fs.readFileSync('/tmp/live-expected.json', 'utf8')) as { ballots: number; expected: Record<string, { abstain: number; candidates: Record<string, number> }> };
+const counts = () => JSON.parse(fs.readFileSync(path.join(os.tmpdir(), 'live-expected.json'), 'utf8')) as { ballots: number; expected: Record<string, { abstain: number; candidates: Record<string, number> }> };
 test.describe.configure({ mode: 'serial' });
 
 test('every contest shows exactly the counts made independently from the decrypted ballots, labelled by the tested rule', async ({ page }) => {
@@ -45,11 +47,11 @@ test('anyone can verify the published tally offline, using only what the page sh
   const fp = sql(`SELECT left(encode(sha256(signing_key),'hex'),16) FROM election.elections WHERE id='${E}'`);
   await expect(page.locator('details')).toContainText(fp);
   const key = (await page.getByLabel('Signing key', { exact: true }).innerText()).trim(), tally = (await page.getByLabel('Signed tally for chain main').innerText()).trim();
-  fs.writeFileSync('/tmp/live-pub-key.txt', key); fs.writeFileSync('/tmp/live-pub-tally.json', tally);
-  const env = { ...process.env }; const run = (file: string) => { try { execFileSync('node', ['packages/cli/ev.mjs', 'verify-results', '--results', file, '--pub', '/tmp/live-pub-key.txt'], { env, stdio: 'pipe' }); return 0; } catch { return 1; } };
-  expect(run('/tmp/live-pub-tally.json')).toBe(0);                                         // the genuine published copy verifies
-  const t = JSON.parse(tally) as { body: string; signature: string }; fs.writeFileSync('/tmp/live-pub-bad.json', JSON.stringify({ ...t, body: t.body.replace(/"ballots":\d+/, '"ballots":999') }));
-  expect(run('/tmp/live-pub-bad.json')).toBe(1);                                           // a doctored copy does not
+  fs.writeFileSync(path.join(os.tmpdir(), 'live-pub-key.txt'), key); fs.writeFileSync(path.join(os.tmpdir(), 'live-pub-tally.json'), tally);
+  const env = { ...process.env }; const run = (file: string) => { try { execFileSync('node', ['packages/cli/ev.mjs', 'verify-results', '--results', file, '--pub', path.join(os.tmpdir(), 'live-pub-key.txt')], { env, stdio: 'pipe' }); return 0; } catch { return 1; } };
+  expect(run(path.join(os.tmpdir(), 'live-pub-tally.json'))).toBe(0);                                         // the genuine published copy verifies
+  const t = JSON.parse(tally) as { body: string; signature: string }; fs.writeFileSync(path.join(os.tmpdir(), 'live-pub-bad.json'), JSON.stringify({ ...t, body: t.body.replace(/"ballots":\d+/, '"ballots":999') }));
+  expect(run(path.join(os.tmpdir(), 'live-pub-bad.json'))).toBe(1);                                           // a doctored copy does not
 });
 
 for (const vp of [{ name: 'mobile', width: 390, height: 844 }, { name: 'desktop', width: 1440, height: 1000 }]) {
